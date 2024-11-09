@@ -17,9 +17,15 @@ pipeline {
             }
         }
         
-        stage('Maven Build') {
+        stage('Maven Compile') {
             steps {
-                sh 'mvn clean package'
+                sh 'mvn clean compile'
+            }
+        }
+        
+        stage('Maven Test') {
+            steps {
+                sh 'mvn test'
             }
         }
         
@@ -36,6 +42,30 @@ pipeline {
                     withSonarQubeEnv('sonar') {
                         sh 'mvn sonar:sonar'
                     }
+                }
+            }
+        }
+        
+        stage('Maven Package') {
+            steps {
+                sh 'mvn clean package'
+            }
+        }
+        
+        stage('Publish to Artifactory') {
+            steps {
+                script {
+                    def server = Artifactory.server 'jfrogserver'
+                    def uploadSpec = """{
+                        "files": [
+                            {
+                                "pattern": "target/*.war",
+                                "target": "example-repo-local/myapp/${env.BUILD_ID}/"
+                            }
+                        ]
+                    }"""
+                    def buildInfo = server.upload spec: uploadSpec
+                    server.publishBuildInfo buildInfo
                 }
             }
         }
@@ -58,6 +88,9 @@ pipeline {
         stage('Kubernetes Deploy') {
             steps {
                 script {
+                    // Set the Kubernetes context if necessary
+                    sh 'kubectl config use-context your-kube-context'  // Change to your context
+                    
                     // Deploy to Kubernetes
                     sh '''
                     kubectl apply -f k8s/deployment.yaml
@@ -65,6 +98,19 @@ pipeline {
                     '''
                 }
             }
+        }
+    }
+    
+    post {
+        always {
+            echo 'Cleaning up workspace...'
+            cleanWs()
+        }
+        success {
+            echo 'Build and deployment successful!'
+        }
+        failure {
+            echo 'Build failed. Please check the logs.'
         }
     }
 }
