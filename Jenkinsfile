@@ -16,26 +16,22 @@ pipeline {
                 git branch: 'main', changelog: false, credentialsId: 'Github-cred', poll: false, url: 'https://github.com/Prakash8618/Nginx-pipe.git'
             }
         }
-        
         stage('Maven Compile') {
             steps {
                 sh 'mvn clean compile'
             }
         }
-        
         stage('Maven Test') {
             steps {
                 sh 'mvn test'
             }
         }
-        
-        stage('OWASP Dependency Check') {
+        stage('OWASP Scan') {
             steps {
                 dependencyCheck additionalArguments: '--scan ./', odcInstallation: 'dp-check7'
                 dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
             }
         }
-        
         stage('Sonar Code Analysis') {
             steps {
                 script {
@@ -45,13 +41,11 @@ pipeline {
                 }
             }
         }
-        
-        stage('Maven Package') {
+        stage('Maven Build') {
             steps {
                 sh 'mvn clean package'
             }
         }
-        
         stage('Publish to Artifactory') {
             steps {
                 script {
@@ -59,7 +53,7 @@ pipeline {
                     def uploadSpec = """{
                         "files": [
                             {
-                                "pattern": "target/*.war",
+                                "pattern": "target/*.jar",
                                 "target": "example-repo-local/myapp/${env.BUILD_ID}/"
                             }
                         ]
@@ -69,11 +63,10 @@ pipeline {
                 }
             }
         }
-        
         stage('Docker Build & Push NGINX App') {
             steps {
                 script {
-                    withDockerRegistry([credentialsId: 'DockerHub_Cred', url: '']) {
+                    withDockerRegistry([credentialsId: 'Docker-cred', url: '']) {
                         // Build and push the Docker image
                         sh '''
                         docker build -t my-nginx-app .
@@ -84,33 +77,30 @@ pipeline {
                 }
             }
         }
-        
+        stage('Debug Kubernetes Config') {
+            steps {
+                sh 'kubectl config view'
+                sh 'kubectl config get-contexts'
+            }
+        }
         stage('Kubernetes Deploy') {
             steps {
                 script {
-                    // Set the Kubernetes context if necessary
-                    sh 'kubectl config use-context your-kube-context'  // Change to your context
-                    
+                    // Set the Kubernetes context to the correct context name
+                    // sh 'KUBECONFIG=/var/lib/jenkins/.kube/config && kubectl config use-context Project_pipeline'  // Use the correct context name
+                       sh 'aws eks update-kubeconfig --name Project_pipeline --region us-east-1 && KUBECONFIG=/var/lib/jenkins/.kube/config'
                     // Deploy to Kubernetes
-                    sh '''
-                    kubectl apply -f k8s/deployment.yaml
-                    kubectl apply -f k8s/service.yaml
-                    '''
+                    try {
+                        sh '''
+                        cd /var/lib/jenkins/workspace/Nginx-webapp/k8s
+                        kubectl apply -f deployment.yaml --validate=false
+                        kubectl apply -f service.yaml --validate=false
+                        '''
+                    } catch (Exception e) {
+                        error("Kubernetes deployment failed: ${e.message}")
+                    }
                 }
             }
-        }
-    }
-    
-    post {
-        always {
-            echo 'Cleaning up workspace...'
-            cleanWs()
-        }
-        success {
-            echo 'Build and deployment successful!'
-        }
-        failure {
-            echo 'Build failed. Please check the logs.'
         }
     }
 }
